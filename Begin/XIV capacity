@@ -1,0 +1,77 @@
+# Get a summary of space on XIV
+
+XCLI=/esg/XCLI/xcli
+USER='admin'
+PW='St0r@g3!'
+DIR="`dirname ${0}`"
+
+# title bar
+#printf "sid  site written\tTBaloc\tTBphys\t\045alloc\t\045writ\tsoftLIM\n"
+#printf "array,Site,actual_written (GB),allocated (GB),physical capacity (TB),\045 Allocated,\045 Written,\045 Soft Limit,Purpose\n"
+printf "SID Site GB_writ GBalloc physTB \045Alloc \045Writ Soft_Limit Purpose\n"
+
+total_alloc=0
+total_writ=0
+num_arr=0
+
+# loop through the XIV list
+while read xiv
+do
+ # skip commented lines
+ if echo "$xiv" | grep "^#"  >/dev/null 2>&1
+ then
+  continue
+ fi
+
+ # initialize variables
+ POOL_FREE=0
+ VOLS=0
+
+ # split the list of arrays by colon and set values
+ SITE="`echo \"$xiv\" | cut -d ':' -f1`"
+ SID="`echo \"$xiv\" | cut -d ':' -f2`"
+ IP="`echo \"$xiv\" | cut -d ':' -f3`"
+ COMMENT="`echo \"$xiv\" | cut -d ':' -f4`"
+
+ # get the capacity of the array
+ CAP_LIST=`$XCLI -u $USER -p $PW -m $IP system_capacity_list -t hard,soft|tail -1`
+ CAP="`echo $CAP_LIST | awk '{print $1}'`"
+ LIMIT="`echo $CAP_LIST | awk '{print $2}'`"
+
+ # get the pools (could be more than one) and space
+ for pool in `$XCLI -u $USER -p $PW -m $IP pool_list -t empty_space_hard,total_volume_size,snapshot_size | grep -v Hard|sed -e 's/  */:/g'`
+ do
+  empty=`echo $pool | cut -d ':' -f1`
+  vols=`echo $pool | cut -d ':' -f2`
+  snaps=`echo $pool | cut -d ':' -f3`
+
+  # add the values from the pools together
+  POOL_FREE=`expr $POOL_FREE + $empty`
+  VOLS=`expr $VOLS + $vols + $snaps`
+ done
+ WRITTEN=`expr $CAP - $POOL_FREE`
+
+ # fancy way to get a percent of provisioned space
+ ppro=$(awk "BEGIN { pc=100*${VOLS}/${CAP}; i=int(pc); print (pc-i<0.5)?i:i+1 }")
+ pfre=$(awk "BEGIN { pc=100-100*${POOL_FREE}/${CAP}; i=int(pc); print (pc-i<0.5)?i:i+1 }")
+ limit=$(awk "BEGIN { pc=100*${LIMIT}/${CAP}; i=int(pc); print (pc-i<0.5)?i:i+1 }")
+ capTB=$(awk "BEGIN { pc=${CAP}/1000; i=int(pc); print (pc-i<0.5)?i:i+1 }")
+
+ # print each array's info
+ #printf "${SITE}  ${SID} ${CAP}\t${POOL_FREE}\t"
+ #printf "${VOLS}\t\t${ppro}\045\t\t${pfre}\045\n"
+ #printf "${SID} ${SITE}  $WRITTEN   \t$VOLS\t${CAP}\t"
+ #printf "${ppro}\045\t${pfre}\045\t${limit}\045\t${COMMENT}\n"
+ #printf "${SID},${SITE},$WRITTEN,${VOLS},${capTB},"
+ #printf "${ppro},${pfre},${limit},${COMMENT}\n"
+ printf "${SID} ${SITE} $WRITTEN\t${VOLS}\t${capTB}\t"
+ printf "${ppro}\t${pfre}\t${limit}\t${COMMENT}\n"
+ total_alloc=`expr $ppro + $total_alloc`
+ total_writ=`expr $pfre + $total_writ`
+ num_arr=`expr $num_arr + 1`
+ ptal=$(awk "BEGIN { pc=${total_alloc}/${num_arr}; i=int(pc); print (pc-i<0.5)?i:i+1 }")
+ pwri=$(awk "BEGIN { pc=${total_writ}/${num_arr}; i=int(pc); print (pc-i<0.5)?i:i+1 }")
+done < ${DIR}/xiv.list
+
+printf "Average allocated: $ptal \045\n";
+printf "Average written: $pwri \045\n";
